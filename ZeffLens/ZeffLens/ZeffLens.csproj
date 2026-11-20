@@ -1,0 +1,23 @@
+﻿<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+    <PropertyGroup>
+        <Version>1.0.0.0</Version>
+        <DebugType>portable</DebugType>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <Author>Zeffuro</Author>
+        <Name>ZeffLens</Name>
+        <InternalName>ZeffLens</InternalName>
+        <Punchline>A Dalamud plugin starter.</Punchline>
+        <Description>A Dalamud plugin generated from Zeffuro's template.</Description>
+        <RepoUrl></RepoUrl>
+        <AcceptsFeedback>true</AcceptsFeedback>
+    </PropertyGroup>
+
+    <Import Project="Build\KamiToolKit.props" Condition="Exists('Build\KamiToolKit.props')"/>
+    <Import Project="Build\KamiToolKit.Components.props" Condition="Exists('Build\KamiToolKit.Components.props')"/>
+    <Import Project="Build\LuminaSupplemental.Excel.props" Condition="Exists('Build\LuminaSupplemental.Excel.props')"/>
+    <Import Project="Build\Lumina.Excel.props" Condition="Exists('Build\Lumina.Excel.props')"/>
+    <Import Project="Build\ManualFFXIVClientStructs.props" Condition="Exists('Build\ManualFFXIVClientStructs.props')"/>
+</Project>
