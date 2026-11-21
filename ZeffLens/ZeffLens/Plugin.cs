@@ -1,17 +1,19 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
-using ZeffLens.Configuration;
+using Dalamud.Plugin.Services;
 using ZeffLens.Configuration.Persistence;
 using ZeffLens.Commands;
-using KamiToolKit;
-using KamiToolKit.BaseTypes;
-using ZeffLens.Addons;
+using ZeffLens.Windows;
 
 namespace ZeffLens;
 
 public sealed class Plugin : IAsyncDalamudPlugin
 {
+    private readonly WindowSystem _windows = new();
+
     public Plugin(IDalamudPluginInterface pluginInterface)
     {
         pluginInterface.Create<Service>();
@@ -23,25 +25,16 @@ public sealed class Plugin : IAsyncDalamudPlugin
         PluginState.Config = ConfigRepository.LoadOrDefault();
         ConfigBackup.DoConfigBackup(Service.PluginInterface);
 
+        PluginState.MemoryDiagnosticsService = new MemoryDiagnosticsService();
+        PluginState.DiagnosticsWindow = new DiagnosticsWindow(PluginState.MemoryDiagnosticsService);
+        _windows.AddWindow(PluginState.DiagnosticsWindow);
 
-        KamiToolKitLibrary.Initialize(Service.PluginInterface, "ZeffLens");
-
-
-        PluginState.ConfigAddon = new ConfigAddon
-        {
-            InternalName = "ZeffLens_Config",
-            Title = "ZeffLens Config",
-            Size = new(600.0f, 430.0f),
-        };
-
-        Service.PluginInterface.UiBuilder.OpenMainUi += ToggleConfigUi;
-        Service.PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
+        Service.PluginInterface.UiBuilder.Draw += _windows.Draw;
+        Service.PluginInterface.UiBuilder.OpenMainUi += ToggleDiagnosticsUi;
+        Service.PluginInterface.UiBuilder.OpenConfigUi += ToggleDiagnosticsUi;
 
         PluginState.CommandHandler = new CommandHandler();
-
         PluginState.DtrService = new DtrService();
-
-
 
         ConfigRepository.SaveImmediate(PluginState.Config);
         return Task.CompletedTask;
@@ -49,63 +42,58 @@ public sealed class Plugin : IAsyncDalamudPlugin
 
     public async ValueTask DisposeAsync()
     {
-        var isFrameworkUnloading = Service.Framework.IsFrameworkUnloading;
+        var config = PluginState.Config;
+        var commandHandler = PluginState.CommandHandler;
+        var dtrService = PluginState.DtrService;
+        var memoryDiagnosticsService = PluginState.MemoryDiagnosticsService;
+        var logger = Service.Logger;
 
-        PluginState.CommandHandler?.Dispose();
-        PluginState.DtrService?.Dispose();
+        Service.PluginInterface.UiBuilder.Draw -= _windows.Draw;
+        Service.PluginInterface.UiBuilder.OpenMainUi -= ToggleDiagnosticsUi;
+        Service.PluginInterface.UiBuilder.OpenConfigUi -= ToggleDiagnosticsUi;
+        _windows.RemoveAllWindows();
 
+        DisposeSafely(commandHandler, nameof(CommandHandler), logger);
+        DisposeSafely(dtrService, nameof(DtrService), logger);
+        if (memoryDiagnosticsService is not null)
+            await memoryDiagnosticsService.ManagedProfiles.ShutdownAsync().ConfigureAwait(false);
+        DisposeSafely(memoryDiagnosticsService, nameof(MemoryDiagnosticsService), logger);
 
-        Service.PluginInterface.UiBuilder.OpenMainUi -= ToggleConfigUi;
-        Service.PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
-
-        if (!isFrameworkUnloading)
+        try
         {
-            await DisposeNativeUiAsync();
+            ConfigRepository.SaveImmediate(config);
         }
-
-        await Service.Framework.RunOnFrameworkThread(KamiToolKitLibrary.Dispose);
-
-
-        ConfigRepository.SaveImmediate(PluginState.Config);
-
-        if (!isFrameworkUnloading)
+        catch (Exception ex)
+        {
+            logger.Warning(ex, "Failed to save configuration during disposal.");
+        }
+        finally
         {
             PluginState.Reset();
+            Service.Reset();
         }
 
     }
 
-
-    private static async ValueTask DisposeNativeUiAsync()
+    private static void ToggleDiagnosticsUi()
     {
-        await DisposeNativeAddonAsync(PluginState.ConfigAddon);
-        PluginState.ConfigAddon = null!;
-
-
+        PluginState.DiagnosticsWindow?.Toggle();
     }
 
-    private static async ValueTask DisposeNativeAddonAsync(NativeAddon? addon)
+    private static void DisposeSafely(IDisposable? disposable, string name, IPluginLog logger)
     {
-        if (addon is null)
+        if (disposable is null)
         {
             return;
         }
 
-        if (Service.Framework.IsInFrameworkUpdateThread)
+        try
         {
-            addon.Dispose();
-            return;
+            disposable.Dispose();
         }
-
-        await addon.DisposeAsync();
-    }
-
-
-
-    private static void ToggleConfigUi()
-    {
-        PluginState.ConfigAddon?.Toggle();
+        catch (Exception ex)
+        {
+            logger.Warning(ex, "Failed to dispose {ServiceName}.", name);
+        }
     }
 }
-
-

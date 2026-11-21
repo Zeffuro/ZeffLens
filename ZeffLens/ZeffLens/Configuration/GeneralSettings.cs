@@ -1,4 +1,3 @@
-
 namespace ZeffLens.Configuration;
 
 public sealed class GeneralSettings

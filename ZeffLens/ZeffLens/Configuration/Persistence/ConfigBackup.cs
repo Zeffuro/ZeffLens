@@ -24,7 +24,8 @@ public static class ConfigBackup
                 return;
             }
 
-            var launcherDirectory = pluginInterface.ConfigFile.Directory?.Parent ?? pluginInterface.ConfigDirectory.Parent?.Parent;
+            var launcherDirectory = pluginInterface.ConfigFile.Directory?.Parent ??
+                                    pluginInterface.ConfigDirectory.Parent?.Parent;
             if (launcherDirectory is null)
             {
                 return;
@@ -40,7 +41,8 @@ public static class ConfigBackup
             var latestFile = new FileInfo(Path.Join(backupDirectory, $"{Name}.latest.zip"));
             var tempFile = Path.Join(backupDirectory, $"{Name}.tmp.zip");
 
-            var needsBackup = !latestFile.Exists || ZipJsonHash(latestFile.FullName) != ConfigFilesJsonHash(configFiles, pluginInterface);
+            var needsBackup = !latestFile.Exists ||
+                              ZipJsonHash(latestFile.FullName) != ConfigFilesJsonHash(configFiles, pluginInterface);
             if (!needsBackup)
             {
                 return;

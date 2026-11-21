@@ -6,48 +6,60 @@ namespace ZeffLens.Configuration;
 [Serializable]
 public sealed class SystemConfiguration : IPluginConfiguration
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
 
     public int Version { get; set; }
 
-    private GeneralSettings general = new();
-    private DtrSettings dtr = new();
+    private GeneralSettings _general = new();
+    private DtrSettings _dtr = new();
+    private DiagnosticsSettings _diagnostics = new();
 
     public GeneralSettings General
     {
-        get => this.general;
-        set => this.general = value ?? new GeneralSettings();
+        get => _general;
+        set => _general = value ?? new GeneralSettings();
     }
 
     public DtrSettings Dtr
     {
-        get => this.dtr;
-        set => this.dtr = value ?? new DtrSettings();
+        get => _dtr;
+        set => _dtr = value ?? new DtrSettings();
+    }
+
+    public DiagnosticsSettings Diagnostics
+    {
+        get => _diagnostics;
+        set => _diagnostics = value ?? new DiagnosticsSettings();
     }
 
     public void EnsureInitialized()
     {
-        this.general ??= new GeneralSettings();
-        this.dtr ??= new DtrSettings();
+        _general ??= new GeneralSettings();
+        _dtr ??= new DtrSettings();
+        _diagnostics ??= new DiagnosticsSettings();
 
-        if (this.Version < CurrentVersion)
+        if (Version < CurrentVersion)
         {
-            this.Migrate();
+            Migrate();
         }
     }
 
     private void Migrate()
     {
-        while (this.Version < CurrentVersion)
+        while (Version < CurrentVersion)
         {
-            switch (this.Version)
+            switch (Version)
             {
                 case <= 0:
-                    this.MigrateFromUnversionedConfig();
-                    this.Version = 1;
+                    MigrateFromUnversionedConfig();
+                    Version = 1;
+                    break;
+                case 1:
+                    _diagnostics ??= new DiagnosticsSettings();
+                    Version = 2;
                     break;
                 default:
-                    this.Version = CurrentVersion;
+                    Version = CurrentVersion;
                     break;
             }
         }

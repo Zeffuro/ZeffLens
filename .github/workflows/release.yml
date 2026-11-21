@@ -1,0 +1,207 @@
+name: Release Build and Publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: ${{ !github.event.release.prerelease }}
+    name: Publish to MyDalamudPlugins
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    env:
+      BUILD_OUTPUT: ZeffLens/ZeffLens/bin/x64/Release
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      RELEASE_PUBLISHED_AT: ${{ github.event.release.published_at }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check release asset
+        id: asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $assets = gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name'
+          "exists=$('latest.zip' -cin $assets)".ToLowerInvariant() >> $env:GITHUB_OUTPUT
+
+      - uses: actions/setup-dotnet@v4
+        if: steps.asset.outputs.exists == 'false'
+        with:
+          dotnet-version: '10.x'
+
+      - name: Download and extract Dalamud (Staging)
+        if: steps.asset.outputs.exists == 'false'
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'dalamud.zip'
+          $dalamud = Join-Path $env:APPDATA 'XIVLauncher/addon/Hooks/dev'
+          Invoke-WebRequest -Uri 'https://goatcorp.github.io/dalamud-distrib/stg/latest.zip' -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $dalamud
+
+      - name: Build Release (Staging)
+        if: steps.asset.outputs.exists == 'false'
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          dotnet build ZeffLens.sln -c Release -p:Platform=x64 "-p:RepoUrl=$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY"
+
+      - name: Prepare release package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET_EXISTS: ${{ steps.asset.outputs.exists }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $output = Join-Path $env:RUNNER_TEMP 'zefflens-release'
+          New-Item -ItemType Directory -Path $output -Force | Out-Null
+          $asset = Join-Path $output 'latest.zip'
+          if ($env:ASSET_EXISTS -eq 'true') {
+            gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern 'latest.zip' --output $asset --clobber
+          } else {
+            Copy-Item -LiteralPath "$env:BUILD_OUTPUT/ZeffLens/latest.zip" -Destination $asset
+          }
+
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($asset)
+          try {
+            $entries = @{}
+            foreach ($entry in $archive.Entries) {
+              $name = $entry.FullName.Replace('\', '/')
+              if ($name -match ':|^/|(^|/)\.{1,2}(/|$)|//' -or $entries.ContainsKey($name)) {
+                throw "Invalid or duplicate package entry: $name"
+              }
+              if ([IO.Path]::GetFileName($name) -ieq 'TerraFX.Interop.Windows.dll') {
+                throw 'The package includes the host TerraFX assembly.'
+              }
+              $entries[$name] = $entry
+            }
+
+            $required = 'ZeffLens.dll', 'ZeffLens.json', 'profiler/ZeffLens.Profiler.exe',
+              'profiler/ZeffLens.Profiler.dll', 'profiler/ZeffLens.Profiler.deps.json',
+              'profiler/ZeffLens.Profiler.runtimeconfig.json', 'profiler/THIRD-PARTY-NOTICES.txt'
+            foreach ($name in $required) {
+              if (!$entries.ContainsKey($name) -or $entries[$name].Length -eq 0) {
+                throw "Missing or empty package entry: $name"
+              }
+            }
+
+            $reader = [IO.StreamReader]::new($entries['profiler/ZeffLens.Profiler.deps.json'].Open())
+            try {
+              $deps = $reader.ReadToEnd() | ConvertFrom-Json -AsHashtable
+            } finally {
+              $reader.Dispose()
+            }
+            $target = $deps.targets[$deps.runtimeTarget.name]
+            if (!$target) { throw 'Missing profiler runtime target.' }
+            foreach ($library in $target.Values) {
+              foreach ($file in $library.runtime.Keys + $library.native.Keys) {
+                if (!$file -or $file.EndsWith('/_._')) { continue }
+                $name = 'profiler/' + [IO.Path]::GetFileName($file)
+                if (!$entries.ContainsKey($name) -or $entries[$name].Length -eq 0) {
+                  throw "Missing or empty package entry: $name"
+                }
+              }
+            }
+
+            foreach ($name in 'ZeffLens.dll', 'ZeffLens.json') {
+              [IO.Compression.ZipFileExtensions]::ExtractToFile($entries[$name], (Join-Path $output $name), $true)
+            }
+          } finally {
+            $archive.Dispose()
+          }
+
+          $manifest = Get-Content -LiteralPath (Join-Path $output 'ZeffLens.json') -Raw | ConvertFrom-Json
+          $assembly = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $output 'ZeffLens.dll'))
+          $version = $assembly.Version.ToString()
+          if ($manifest.InternalName -cne 'ZeffLens' -or $assembly.Name -cne 'ZeffLens' -or
+              $manifest.AssemblyVersion -cne $version -or $manifest.DalamudApiLevel -lt 1 -or
+              $env:RELEASE_TAG -cnotin @($version, "v$version")) {
+            throw "Invalid ZeffLens release metadata for tag '$env:RELEASE_TAG' and assembly version '$version'."
+          }
+          if ($env:ASSET_EXISTS -ne 'true') {
+            gh release upload $env:RELEASE_TAG $asset --repo $env:GITHUB_REPOSITORY
+          }
+
+      - name: Checkout MyDalamudPlugins
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/MyDalamudPlugins
+          ref: main
+          path: plugin-feed
+          token: ${{ secrets.MYDALAMUDPLUGINS_TOKEN }}
+
+      - name: Update plugin feed
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $feed = 'plugin-feed'
+          $output = Join-Path $env:RUNNER_TEMP 'zefflens-release'
+          $manifestPath = Join-Path $output 'ZeffLens.json'
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -AsHashtable
+          $version = [version]$manifest.AssemblyVersion
+          $tag = [Uri]::EscapeDataString($env:RELEASE_TAG)
+          $url = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/releases/download/$tag/latest.zip"
+          $publishedAt = [DateTimeOffset]::Parse($env:RELEASE_PUBLISHED_AT)
+          $indexPath = Join-Path $feed 'repo.json'
+          $destination = Join-Path $feed 'plugins/ZeffLens'
+          git -C $feed config user.name 'github-actions[bot]'
+          git -C $feed config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $base = git -C $feed rev-parse HEAD
+            $entries = Get-Content -LiteralPath $indexPath -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
+            if ($entries -isnot [array]) { throw 'The plugin feed index must be a JSON array.' }
+
+            $existing = @($entries | Where-Object { $_.InternalName -ieq $manifest.InternalName })
+            if ($existing.Count -gt 1) { throw 'The plugin feed contains duplicate ZeffLens entries.' }
+            if ($existing.Count -eq 1) {
+              $plugin = $existing[0]
+              $currentVersion = [version]$plugin.AssemblyVersion
+              if ($currentVersion -gt $version) {
+                Write-Host "Keeping newer ZeffLens version $currentVersion in the feed."
+                return
+              }
+              if ($currentVersion -eq $version -and $plugin.DownloadLinkUpdate -and $plugin.DownloadLinkUpdate -cne $url) {
+                throw "ZeffLens version $version is already linked to a different release."
+              }
+            } else {
+              $plugin = [ordered]@{ DownloadCount = 0 }
+              $entries += $plugin
+            }
+
+            foreach ($key in $manifest.Keys) {
+              $plugin[$key] = $manifest[$key]
+            }
+            $plugin.DownloadLinkInstall = $url
+            $plugin.DownloadLinkUpdate = $url
+            $plugin.DownloadLinkTesting = $url
+            $plugin.LastUpdated = $publishedAt.ToUnixTimeSeconds()
+
+            New-Item -ItemType Directory -Path $destination -Force | Out-Null
+            Copy-Item -LiteralPath $manifestPath, (Join-Path $output 'latest.zip') -Destination $destination -Force
+            ConvertTo-Json -InputObject $entries -Depth 100 | Set-Content -LiteralPath $indexPath -Encoding utf8NoBOM
+
+            git -C $feed add -- repo.json plugins/ZeffLens/ZeffLens.json plugins/ZeffLens/latest.zip
+            if (!(git -C $feed diff --cached --name-only)) {
+              return
+            }
+            git -C $feed commit -m "Update ZeffLens to $env:RELEASE_TAG"
+
+            try {
+              git -C $feed push origin HEAD:refs/heads/main
+              return
+            } catch {
+              if ($attempt -eq 3) { throw }
+              git -C $feed fetch origin '+refs/heads/main:refs/remotes/origin/main'
+              if ((git -C $feed rev-parse origin/main) -eq $base) { throw }
+              git -C $feed checkout --detach origin/main
+            }
+          }

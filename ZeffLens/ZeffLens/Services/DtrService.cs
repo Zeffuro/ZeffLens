@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using Dalamud.Game.Gui.Dtr;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Plugin.Services;
@@ -9,29 +10,35 @@ public sealed class DtrService : IDisposable
 {
     private const string EntryTitle = "ZeffLens";
 
-    private IDtrBarEntry? dtrEntry;
-    private DateTime lastUpdate = DateTime.MinValue;
+    private IDtrBarEntry? _dtrEntry;
+    private long _lastUpdate;
+    private string? _text;
+    private string? _tooltip;
 
     public DtrService()
     {
-        Service.Framework.Update += this.OnFrameworkUpdate;
+        Service.Framework.Update += OnFrameworkUpdate;
     }
 
     public void Dispose()
     {
-        Service.Framework.Update -= this.OnFrameworkUpdate;
-        this.RemoveEntry();
+        Service.Framework.Update -= OnFrameworkUpdate;
+        RemoveEntry();
     }
 
     private void OnFrameworkUpdate(IFramework framework)
     {
-        if ((DateTime.Now - this.lastUpdate).TotalMilliseconds < 500)
+        if (!PluginState.Config.Dtr.Enabled && _dtrEntry is null)
+            return;
+
+        var now = Stopwatch.GetTimestamp();
+        if (Stopwatch.GetElapsedTime(_lastUpdate, now).TotalMilliseconds < 500)
         {
             return;
         }
 
-        this.lastUpdate = DateTime.Now;
-        this.UpdateBar();
+        _lastUpdate = now;
+        UpdateBar();
     }
 
     private void UpdateBar()
@@ -39,59 +46,68 @@ public sealed class DtrService : IDisposable
         var settings = PluginState.Config.Dtr;
         if (!settings.Enabled)
         {
-            this.RemoveEntry();
+            RemoveEntry();
             return;
         }
 
-        this.EnsureEntry();
-        if (this.dtrEntry is null)
+        EnsureEntry();
+        if (_dtrEntry is null)
         {
             return;
         }
 
         if (!Service.ClientState.IsLoggedIn && !settings.ShowWhenLoggedOut)
         {
-            this.dtrEntry.Shown = false;
+            _dtrEntry.Shown = false;
             return;
         }
 
-        this.dtrEntry.Text = new SeStringBuilder().AddText(settings.Text).Build();
-        this.dtrEntry.Tooltip = new SeStringBuilder().AddText(settings.Tooltip).Build();
-        this.dtrEntry.Shown = true;
+        if (_text != settings.Text)
+        {
+            _text = settings.Text;
+            _dtrEntry.Text = new SeStringBuilder().AddText(_text).Build();
+        }
+
+        if (_tooltip != settings.Tooltip)
+        {
+            _tooltip = settings.Tooltip;
+            _dtrEntry.Tooltip = new SeStringBuilder().AddText(_tooltip).Build();
+        }
+        _dtrEntry.Shown = true;
     }
 
     private void EnsureEntry()
     {
-        if (this.dtrEntry is not null)
+        if (_dtrEntry is not null)
         {
             return;
         }
 
-        this.dtrEntry = Service.DtrBar.Get(EntryTitle);
-        this.dtrEntry.Shown = true;
-        this.dtrEntry.OnClick += OnDtrClick;
+        _dtrEntry = Service.DtrBar.Get(EntryTitle);
+        _dtrEntry.Shown = true;
+        _dtrEntry.OnClick += OnDtrClick;
     }
 
     private void RemoveEntry()
     {
-        if (this.dtrEntry is null)
+        if (_dtrEntry is null)
         {
             return;
         }
 
-        this.dtrEntry.OnClick -= OnDtrClick;
-        this.dtrEntry.Remove();
-        this.dtrEntry = null;
+        _dtrEntry.OnClick -= OnDtrClick;
+        _dtrEntry.Remove();
+        _dtrEntry = null;
+        _text = null;
+        _tooltip = null;
     }
 
     private static void OnDtrClick(DtrInteractionEvent interaction)
     {
         if (PluginState.Config.Dtr.ClickToOpenConfig)
         {
-            PluginState.ConfigAddon.Toggle();
+            PluginState.DiagnosticsWindow?.Toggle();
             return;
         }
-
     }
 }
-

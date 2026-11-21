@@ -58,16 +58,6 @@ if ($gitRepositoryExitCode -ne 0)
     Invoke-Git -Arguments @("init")
 }
 
-if (Test-PropsContains "Build\KamiToolKit.props" "KamiToolKit\\KamiToolKit\.csproj")
-{
-    Add-Submodule "https://github.com/MidoriKami/KamiToolKit" "ZeffLens/KamiToolKit"
-}
-
-if (Test-PropsContains "Build\KamiToolKit.Components.props" "KamiToolKit\.Components\\KamiToolKit\.Components\.csproj")
-{
-    Add-Submodule "https://github.com/MidoriKami/KamiToolKit.Components" "ZeffLens/KamiToolKit.Components"
-}
-
 if (Test-PropsContains "Build\Lumina.Excel.props" "Lumina\.Excel\\src\\Lumina\.Excel\\Lumina\.Excel\.csproj")
 {
     Add-Submodule "https://github.com/NotAdam/Lumina.Excel" "ZeffLens/Lumina.Excel"

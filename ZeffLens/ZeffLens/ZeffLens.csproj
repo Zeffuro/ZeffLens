@@ -1,23 +1,44 @@
-﻿<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
     <PropertyGroup>
         <Version>1.0.0.0</Version>
         <DebugType>portable</DebugType>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <ShouldUnsetParentConfigurationAndPlatform>false</ShouldUnsetParentConfigurationAndPlatform>
     </PropertyGroup>
 
     <PropertyGroup>
         <Author>Zeffuro</Author>
         <Name>ZeffLens</Name>
         <InternalName>ZeffLens</InternalName>
-        <Punchline>A Dalamud plugin starter.</Punchline>
-        <Description>A Dalamud plugin generated from Zeffuro's template.</Description>
+        <Punchline>Check plugin performance and reloads.</Punchline>
+        <Description>Compare update times, check process memory, and see what stays loaded after a plugin reload.</Description>
+        <Tags>diagnostics;debugging;performance;profiling</Tags>
         <RepoUrl></RepoUrl>
         <AcceptsFeedback>true</AcceptsFeedback>
+        <LoadRequiredState>2</LoadRequiredState>
     </PropertyGroup>
 
-    <Import Project="Build\KamiToolKit.props" Condition="Exists('Build\KamiToolKit.props')"/>
-    <Import Project="Build\KamiToolKit.Components.props" Condition="Exists('Build\KamiToolKit.Components.props')"/>
     <Import Project="Build\LuminaSupplemental.Excel.props" Condition="Exists('Build\LuminaSupplemental.Excel.props')"/>
     <Import Project="Build\Lumina.Excel.props" Condition="Exists('Build\Lumina.Excel.props')"/>
     <Import Project="Build\ManualFFXIVClientStructs.props" Condition="Exists('Build\ManualFFXIVClientStructs.props')"/>
+
+    <ItemGroup>
+        <Reference Include="TerraFX.Interop.Windows" Private="false" />
+        <ProjectReference Include="../ZeffLens.Profiler/ZeffLens.Profiler.csproj"
+                          ReferenceOutputAssembly="false" Private="false" PrivateAssets="all" ExcludeAssets="all" />
+    </ItemGroup>
+
+    <Target Name="StageManagedProfiler" AfterTargets="CopyFilesToOutputDirectory"
+            BeforeTargets="DefaultDalamudPackagerDebug;DefaultDalamudPackagerRelease">
+        <Error Condition="!Exists('../ZeffLens.Profiler/bin/$(Configuration)/ZeffLens.Profiler.exe')"
+               Text="Build the x64 profiler helper before packaging ZeffLens." />
+        <ItemGroup>
+            <ProfilerFiles Include="../ZeffLens.Profiler/bin/$(Configuration)/*"
+                           Exclude="../ZeffLens.Profiler/bin/$(Configuration)/*.pdb;../ZeffLens.Profiler/bin/$(Configuration)/*.runtimeconfig.dev.json" />
+        </ItemGroup>
+        <Copy SourceFiles="@(ProfilerFiles)" DestinationFiles="@(ProfilerFiles->'$(TargetDir)profiler/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+        <ItemGroup>
+            <FileWrites Include="@(ProfilerFiles->'$(TargetDir)profiler/%(RecursiveDir)%(Filename)%(Extension)')" />
+        </ItemGroup>
+    </Target>
 </Project>
